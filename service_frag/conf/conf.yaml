@@ -1,0 +1,18 @@
+
+etcd_option:
+  hosts:
+    - "127.0.0.1:2379"
+  election_path: "/myetcd_election"
+  slave_path: "/myetcd_service"
+
+quorum_cap: 7
+
+is_master_consume: false
+
+nsq:
+  addr: "127.0.0.1:4150"
+  lookup_address_list:
+    - "127.0.0.1:4161"
+
+master_topic:
+  - "master-data-topic-1"
