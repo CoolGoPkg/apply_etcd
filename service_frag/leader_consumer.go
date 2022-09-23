@@ -7,8 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
-
 	"github.com/nsqio/go-nsq"
 )
 
@@ -23,12 +21,11 @@ type LeaderConsumers struct {
 }
 
 type LeaderConsumer struct {
-	topic        string
-	QurumCap     int
-	consumer     *nsq.Consumer
-	sche         map[int]*LeaderSched
-	hashIndex    map[string]int
-	TimeOberseve time.Time
+	topic     string
+	QurumCap  int
+	consumer  *nsq.Consumer
+	sche      map[int]*LeaderSched
+	hashIndex map[string]int
 }
 
 type LeaderSched struct {
@@ -103,15 +100,15 @@ type Data struct {
 
 func (self *LeaderConsumer) HandleMessage(message *nsq.Message) error {
 
-	fmt.Println("消息： ", string(message.Body))
+	fmt.Println("收到消息： ", string(message.Body))
 	var testData = new(Data)
 	if err := json.Unmarshal(message.Body, testData); err != nil {
 		fmt.Printf("HandleMessage, failed to unmarshal tick data: %s, err: %v", string(message.Body), err)
 		return err
 	}
-	fmt.Println("收到消息： ", testData.ID)
 
 	index := self.GetIndex(testData.ID)
+	fmt.Printf("发送消息 ： %s 到 %d \n", testData.ID, index)
 	self.sche[index].Channel <- message.Body
 
 	return nil

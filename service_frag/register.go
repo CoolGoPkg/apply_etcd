@@ -10,10 +10,12 @@ import (
 	"github.com/pborman/uuid"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -47,7 +49,6 @@ type MasterInfo struct {
 type SlaveInfo struct {
 	ChildrenNodeData *atomic.Value //订阅某个队列的数据
 	Consumers        map[int]*FollowerConsumer
-	once             sync.Once
 }
 
 type Service struct {
@@ -106,10 +107,18 @@ func (s *Service) Start() error {
 		fmt.Println(err)
 		return err
 	}
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	for {
 		select {
 		case <-s.instance.client.Ctx().Done():
 			return errors.New("server closed")
+
+		case interSig := <-sig:
+			fmt.Println("internal  : ", interSig)
+			return errors.New("server closed by internal signal : " + interSig.String())
+
 		case _, ok := <-ch:
 			if !ok {
 				fmt.Println("keep alive channel closed")
@@ -207,68 +216,6 @@ func (s *Service) WatchSelfNodesData() {
 	}()
 }
 
-func (s *Service) WatchNodes() {
-	rch := s.instance.client.Watch(context.Background(), s.instance.ServicePath, clientv3.WithPrefix())
-	s.distributedNodeJob()
-	go func() {
-		for {
-			select {
-			case wresp := <-rch:
-				for _, ev := range wresp.Events {
-					switch ev.Type {
-					case clientv3.EventTypePut:
-						fmt.Println("watch node put ", ev.IsCreate(), string(ev.Kv.Key), string(ev.Kv.Value))
-						if ev.IsCreate() {
-							s.distributedNodeJob()
-						}
-					case clientv3.EventTypeDelete:
-						fmt.Println("watch node delete  ", string(ev.Kv.Key), string(ev.Kv.Value))
-						if s.master.Master.Load().(bool) && string(ev.Kv.Key) != s.instance.name {
-							s.distributedNodeJob()
-						}
-					}
-				}
-			case <-s.master.watchNodesChan:
-				return
-			}
-		}
-	}()
-}
-
-func (s *Service) Election() {
-	s1, err := concurrency.NewSession(s.instance.client, concurrency.WithTTL(2))
-	if err != nil {
-		fmt.Println("new session:", err)
-		panic(err)
-	}
-	e1 := concurrency.NewElection(s1, s.instance.ElectionPath)
-	if err := e1.Campaign(context.Background(), util.GetInternal()+"_"+uuid.New()); err != nil {
-		fmt.Println("campaign :", err)
-		panic(err)
-	}
-	cctx, cancel := context.WithCancel(context.TODO())
-	defer cancel()
-	fmt.Println("elect success info,", (<-e1.Observe(cctx)), s.instance.name)
-	s.master.Master.Store(true)
-	s.StopSlaveOperator()
-	s.master.Consumers = InitLeaderConsumer(conf.Config.MasterTopic, conf.Config.Nsqd)
-	s.WatchNodes()
-}
-
-func (s *Service) StopSlaveOperator() {
-	value := s.slave.ChildrenNodeData.Load() //停止消费follower_consumer
-	if value != nil {
-		indexes := value.([]string)
-		if len(indexes) > 0 {
-			for _, index := range indexes {
-				s.stopConsume(index)
-			}
-		}
-	}
-
-	s.slave = s.InitSlaveInfo()
-}
-
 func (s *Service) startConsume(indexes []string) {
 
 	for _, index := range indexes {
@@ -287,9 +234,74 @@ func (s *Service) stopConsume(indexNode string) {
 	}
 }
 
+func (s *Service) StopSlaveOperator() {
+	value := s.slave.ChildrenNodeData.Load() //停止消费follower_consumer
+	if value != nil {
+		indexes := value.([]string)
+		if len(indexes) > 0 {
+			for _, index := range indexes {
+				s.stopConsume(index)
+			}
+		}
+	}
+
+	s.slave = s.InitSlaveInfo()
+}
+
+func (s *Service) Election() {
+	s1, err := concurrency.NewSession(s.instance.client, concurrency.WithTTL(2))
+	if err != nil {
+		fmt.Println("new session:", err)
+		panic(err)
+	}
+	e1 := concurrency.NewElection(s1, s.instance.ElectionPath)
+	if err := e1.Campaign(context.Background(), util.GetInternal()+"_"+uuid.New()); err != nil {
+		fmt.Println("campaign :", err)
+		panic(err)
+	}
+	fmt.Println("=============================================== 我已经成为主节点 ==============================================================")
+	cctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+	fmt.Println("elect success info,", (<-e1.Observe(cctx)), s.instance.name)
+	s.master.Master.Store(true)
+	s.StopSlaveOperator()
+	s.master.Consumers = InitLeaderConsumer(conf.Config.MasterTopic, conf.Config.Nsqd)
+	s.WatchNodes()
+}
+
+func (s *Service) WatchNodes() {
+	rch := s.instance.client.Watch(context.Background(), s.instance.ServicePath, clientv3.WithPrefix())
+	s.distributedNodeJob()
+	go func() {
+		for {
+			select {
+			case wresp := <-rch:
+				for _, ev := range wresp.Events {
+					switch ev.Type {
+					case clientv3.EventTypePut:
+						fmt.Println("发现增加了节点: ", ev.IsCreate(), string(ev.Kv.Key), string(ev.Kv.Value))
+						fmt.Println("即将任务重新分配")
+						if ev.IsCreate() {
+							s.distributedNodeJob()
+						}
+					case clientv3.EventTypeDelete:
+						fmt.Println("发现删除了节点: ", string(ev.Kv.Key), string(ev.Kv.Value))
+						fmt.Println("即将任务重新分配")
+						if s.master.Master.Load().(bool) && string(ev.Kv.Key) != s.instance.name {
+							s.distributedNodeJob()
+						}
+					}
+				}
+			case <-s.master.watchNodesChan:
+				return
+			}
+		}
+	}()
+}
+
 func (s *Service) distributedNodeJob() {
 	keys, err := s.getNodeInfo()
-	fmt.Println("keys:::", keys)
+	fmt.Println("获取到目前所有节点的 Keys :", keys)
 	if err != nil {
 		fmt.Println("get node info occured error,", err)
 		return
@@ -360,7 +372,7 @@ func (s *Service) assignNode(quorumCap int, keys []string, distributed map[strin
 
 func (s *Service) LoadNodeToEtcd(data map[string][]string) {
 	for key, value := range data {
-		fmt.Println("set node data %s -- %v \n", key, value)
+		fmt.Printf("开始向节点 %s 分配分片：%#v 的任务 \n", key, data)
 		s.SetData(key, value)
 	}
 }

@@ -16,6 +16,6 @@ func HashCode(s string) int { //固定的hashcode
 
 func GetIndex(code string, length, div int) int {
 	hash := HashCode(code)
-	index := (hash / div) & (length - 1)
+	index := hash % (length * div)
 	return index
 }

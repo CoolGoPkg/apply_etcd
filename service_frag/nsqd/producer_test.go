@@ -17,7 +17,7 @@ func TestCreateProducer(t *testing.T) {
 	producer := CreateProducer(nsqAddr)
 	fmt.Println("create success")
 	for i := 0; i < 10000; i++ {
-		fmt.Println(i)
+		fmt.Println(10000 + i)
 		testData := Data{
 			ID: "测试消息：" + strconv.Itoa(i),
 		}
@@ -32,7 +32,7 @@ func TestCreateProducer(t *testing.T) {
 			t.Log("pubulish err : ", err)
 			continue
 		}
-		time.Sleep(time.Second)
+		time.Sleep(time.Millisecond)
 	}
 
 }

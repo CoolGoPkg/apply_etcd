@@ -6,7 +6,7 @@ import (
 	"github.com/nsqio/go-nsq"
 )
 
-//  CreateNSQConsumer 新建消费者
+// CreateNSQConsumer 新建消费者
 func CreateNSQConsumer(topicName, channelName string, lookupAddressList []string,
 	messageHandler nsq.Handler) *nsq.Consumer {
 	configObj := nsq.NewConfig()

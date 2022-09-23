@@ -12,20 +12,11 @@ import (
 type FollowerConsumer struct {
 	topic    string
 	consumer *nsq.Consumer
-	snapshot map[string]*snapshotItem
-}
-
-type snapshotItem struct {
-	ProdCode       string
-	LastAt         int64
-	TurnoverVolume int64
-	TradeStatus    string
 }
 
 func InitFollowerConsumer(index int, config conf.ConfigNSQ) *FollowerConsumer {
 	consumer := new(FollowerConsumer)
 	consumer.topic = fmt.Sprintf(followerTopic, index)
-	consumer.snapshot = make(map[string]*snapshotItem)
 	consumer.consumer = nsqd.CreateNSQConsumer(consumer.topic, channel, config.LookupAddress, consumer)
 	fmt.Println("start consume real::::", consumer.topic)
 	return consumer
@@ -34,10 +25,10 @@ func InitFollowerConsumer(index int, config conf.ConfigNSQ) *FollowerConsumer {
 func (self *FollowerConsumer) HandleMessage(message *nsq.Message) error {
 	var testData = new(Data)
 	if err := json.Unmarshal(message.Body, testData); err != nil {
-		fmt.Println("HandleMessage, failed to unmarshal tick data: %s, err: %v", string(message.Body), err)
+		fmt.Printf("HandleMessage, failed to unmarshal tick data: %s, err: %v \n", string(message.Body), err)
 		return err
 	}
-	fmt.Println("follower consumer:", string(message.Body), util.GetIndex(testData.ID, 50, 10))
+	fmt.Printf("follower consumer message : %s   topic index : %d \n", string(message.Body), util.GetIndex(testData.ID, conf.Config.QuorumCap-1, 1))
 
 	return nil
 }
